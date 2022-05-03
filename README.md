@@ -7,7 +7,7 @@ A short demo that shows how to create, train, test, save and reload a CNN model.
   <img src="https://github.com/grensen/top_50_mnist/blob/main/figures/top_50_mnist_benchmark.png?raw=true">
 </p>
 
-That ranks under the top 50 in the [MNIST benchmark](https://paperswithcode.com/sota/image-classification-on-mnist). For this, my base NN is used, extended and turned into a [CNN](https://github.com/grensen/convolutional_neural_network). The result was quite good with 99,20% accuracy in the MNIST test. This CNN model here is quite similar and based on the previous demo. But with an additional technique, [Infinity Dropout](https://github.com/grensen/easy_regression#infinity-regression), and a few more epochs of training.
+This CNN ranks under the top 50 in the [MNIST benchmark](https://paperswithcode.com/sota/image-classification-on-mnist). For that, my basic NN is used, extended and turned into a [CNN](https://github.com/grensen/convolutional_neural_network). The result was quite good with 99,20% accuracy in the MNIST test. This CNN model here is quite similar and based on the previous demo. But with an additional technique, [Infinity Dropout](https://github.com/grensen/easy_regression#infinity-regression), and a few more epochs of training.
 
 ## The Demo
 <p align="center">
