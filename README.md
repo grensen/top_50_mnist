@@ -1,6 +1,6 @@
 # Top 50 On MNIST CNN 
 
-A short demo showing how to create, train, test, save, and reload a CNN model. 
+A short demo that shows how to create, train, test, save and reload a CNN model. 
 
 ## MNIST Benchmark
 <p align="center">
