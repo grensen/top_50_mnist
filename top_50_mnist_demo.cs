@@ -8,16 +8,19 @@ AutoData d = new(path);
 
 // 1. init cnn + nn
 int startDimension = 28; // or = (int)sqrt(784)
-var isCnn    = true; // true = cnn or false = nn
+var isCnn = true; // true = cnn or false = nn
 int[] cnn = { 1, 8, 16 }; // non-RGB = 1 (MNIST) or RGB = 3 (CIFAR-10), cnn input layer dimension
 int[] filter = { 5, 3 }; // x * y dim
 int[] stride = { 2, 1 }; // replaces pooling with higher strides than 1  
-int[] net    = { 784, 300, 300, 300, 10 }; // nn
-var lr = 0.005f;
-var momentum = 0.5f;
-var lr_mlt = 0.99f;
-var mom_mlt = 0.5f;
+int[] net = { 784, 300, 300, 300, 10 }; // nn
 
+var lr       = 0.005f;
+var momentum = 0.5f;
+var lr_mlt   = 0.99f;
+var mom_mlt  = 0.5f;
+var lr2      = 0.005f;
+var lc_mlt   = 1;
+var infinity = 0.5f;
 // 2.0 out conv dimensions            
 int[] dim = GetCnnDimensions(cnn.Length - 1, startDimension, filter, stride);
 // 2.1 convolution steps for layer wise preparation
@@ -30,22 +33,15 @@ float[] kernel = InitKernel(cnn, filter);
 // 3.1 init neural network weights
 float[] weight = NeuralNetWeightInit(net, cStep, isCnn, 12345);
 
-// print info stuff
 NetInfo();
 
-// get time
 DateTime elapsed = DateTime.Now;
-
-// to check sample probability count
-int[] isDone = new int[60000];
-// MNIST training (60k) for n epochs
+int[] isDone = new int[60000]; // sample probability count
 int seed = 12345;
-for (int epoch = 0; epoch < 41; epoch++, lr *= lr_mlt, momentum *= mom_mlt)
-{
-    CnnTraining(d, ref seed, isDone, isCnn, cnn, filter, stride, kernel, dim, cStep, kStep, net, weight, 60000, epoch, lr, momentum);
-    if(epoch > 19) CnnTraining(d, ref seed, isDone, isCnn, cnn, filter, stride, kernel, dim, cStep, kStep, net, weight, 10000);
-}
-Console.WriteLine("Done after " + ((DateTime.Now - elapsed).TotalMilliseconds / 1000.0).ToString("F2") + "s\n");
+for (int epoch = 0; epoch < 41; epoch++, lr *= lr_mlt, lr2 *= lc_mlt, momentum *= mom_mlt)
+    CnnTraining(d, ref seed, isDone, isCnn, cnn, filter, stride, kernel, dim, cStep, kStep, net, weight, 60000, epoch, lr, lr2, momentum, infinity);
+
+print("Done after " + ((DateTime.Now - elapsed).TotalMilliseconds / 1000.0).ToString("F2") + "s\n");
 // MNIST test 10k 
 CnnTraining(d, ref seed, isDone, isCnn, cnn, filter, stride, kernel, dim, cStep, kStep, net, weight, 10000);
 
@@ -62,180 +58,18 @@ CnnTraining(d, ref seed, isDone, isCnn, cnn2, filter2, stride2, kernel2, dim2, c
 
 print("\nEnd MNIST CNN demo");
 
-
 // 5.0 core run
-static void CnnTrainingNew(AutoData d, ref int seed, int[] isDone, // data stuff
-    bool isCnn, int[] cnn, int[] filter, int[] stride, float[] kernel, int[] dim, int[] cSteps, int[] kStep, // cnn stuff
-    int[] net, float[] weight,  // nn stuff
-    int len, int epoch = -1, float lr = 0, float mom = 0) // optional hyperparameters for training only
-{
-    static int FastRand(ref int seed) { return ((seed = (214013 * seed + 2531011)) >> 16) & 0x7FFF; } // [0, 32768)
-    DateTime elapsed = DateTime.Now;
-    int correct = 0, all = 0;
-    
-    // change from training to test if no learning rate
-    bool training = lr == 0 ? false : true;
-    
-    // cnn stuff
-    int cnn_layerLen = cnn.Length - 1;
-    int cnn_neuronLen = GetCnnNeuronsLen(28, cnn, dim);
-    int cOutput = cnn_neuronLen - cSteps[cnn_layerLen];
-    
-    // nn stuff
-    int weightLen = weight.Length, neuronLen = GetNeuronsLen(net);
-    int layer = net.Length - 1, input = net[0], output = net[layer]; // output neurons
-    int inputHidden = neuronLen - output; // size of input and hidden neurons
-
-    // correction value for each neural network weight    
-    float[] delta = training ? new float[weight.Length] : null;
-
-    float[] kernel_delta = training ? new float[kernel.Length] : null;
-    
-    // start training each epoch
-    for (int x = 1, batch = 1; x < len + 1; x++)
-    {
-        // drop if count reaches threshold
-       // if (training && isDone[x - 1] >= 2) continue;
-        // get target label
-        int target = d.GetLabel(x - 1, training);
-        // create neurons arrays for nn and cnn
-        float[] neuron = null, conv = null;
-        // feed input sample and set arrays
-        if (isCnn) // cnn active
-        {
-            // feed image and set arrays
-            conv = FeedSample(d.GetSample(x - 1, training), cnn_neuronLen);
-            neuron = new float[neuronLen];
-            // convolution feed forward
-            if (!training)
-                ConvolutionForward(cnn, dim, cSteps, filter, kStep, stride, conv, kernel);
-            else
-                ConvolutionForwardDropout(cnn, dim, cSteps, filter, kStep, stride, conv, kernel, ref seed);
-
-          //  ConvolutionForwardDropout(cnn, dim, cSteps, filter, kStep, stride, conv, kernel, ref seed);
-
-            for (int i = 0, ii = cSteps[cnn_layerLen]; i < cOutput; i++)
-                neuron[i] = conv[ii + i];
-            /*
-            // send last cnn layer to first nn layer
-            if (!training)
-            {
-                for (int i = 0, ii = cSteps[cnn_layerLen]; i < cOutput; i++)
-                    neuron[i] = conv[ii + i];
-            }
-            else
-                for (int i = 0, ii = cSteps[cnn_layerLen]; i < cOutput; i++)
-                {
-                    float cv = conv[ii + i];
-                    if (cv > 0)
-                    { 
-                        if(FastRand(ref seed) / 32767.0f > 0.4f)
-                            neuron[i] = cv;
-                        else
-                            neuron[i] = conv[ii + i] = 0;   
-                    }
-                }
-            */
-        }
-        else // just neural net, no cnn
-            neuron = FeedSample(d.GetSample(x - 1, training), neuronLen);
-
-        // neural net feed forward
-        FeedForward(net, neuron, weight, layer, output, inputHidden);
-
-        int prediction = ArgMax(output, inputHidden, neuron);
-        Sm(inputHidden, output, neuron[inputHidden + prediction], neuron);
-
-        // general network prediction 
-        correct += prediction == target ? 1 : 0; all++; // true count
-        // test zone ends here
-        if (!training) continue; // dirty
-        // probability check with count to drop high confident samples over epochs
-        if (neuron[inputHidden + prediction] >= 0.99) { isDone[x - 1]++; continue; }
-        if (neuron[inputHidden + target] >= 0.99) continue;
-
-        float[] gradient = new float[neuronLen];// nn gradients array
-        float[] cnnGradient = new float[cSteps[cnn_layerLen] + cOutput];// cnn gradients array 
-    
-        // output error (target - output)
-        for (int n = inputHidden; n < neuronLen; n++) 
-            gradient[n] = target == n - inputHidden ? 1 - neuron[n] : -neuron[n];
-
-        // nn backprop
-        Backprop(net, neuron, weight, gradient, delta, layer, inputHidden, neuronLen, weightLen);
-        // count batch size
-        batch++;
-        // cnn backprop
-
-        if (isCnn)
-        {
-            // sent gradient from first nn input layer to last cnn layer 
-            for (int i = 0, ii = cSteps[cnn_layerLen]; i < cOutput; i++, ii++)
-                cnnGradient[ii] = gradient[i];
-
-            // convolution backprop with kernel update - TODO: add delta and batch support
-            ConvolutionBackprop(cnn, dim, cSteps, filter, kStep, stride, conv, kernel, kernel_delta, cnnGradient, lr);
-        }
-
-        // update
-        if (prediction == target) continue;
-      //  for (int i = 0; i < kernel.Length; i++)
-        {
-          //  kernel[i] += kernel_delta[i] * lr;
-          //  kernel_delta[i] = 0;
-        }
-        Update(net, weight, delta, layer, (neuronLen / layer * 1.0f) / (batch + 1), lr, mom);
-        batch = 0;
-    } // runs end
-
-    if (lr == 0) Console.WriteLine("Accuracy on test data = " + (correct * 100.0 / all).ToString("F2")
-            + "% after " + ((DateTime.Now - elapsed).TotalMilliseconds / 1000.0).ToString("F2") + "s");
-    else Console.WriteLine("epoch = " + epoch.ToString().PadLeft(2) + "  |  acc = " + (correct * 100.0 / all).ToString("F2").PadLeft(6)
-            + "%  |  time = " + ((DateTime.Now - elapsed).TotalMilliseconds / 1000.0).ToString("F2") + "s");
-    
-    static int ArgMax(int output, int start, float[] neuron)
-    {
-        float max = neuron[start]; // init class 0 prediction      
-        int prediction = 0; // init class 0 prediction
-        for (int i = 1; i < output; i++)
-        {
-            float n = neuron[i + start];
-            if (n > max) { max = n; prediction = i; } // grab maxout prediction here
-        }
-        return prediction;
-    }
-    static void Sm(int inputHidden, int output, float max, float[] neuron)
-    {
-        float scale = 0; // softmax with max trick
-        for (int n = inputHidden, N = inputHidden + output; n != N; n++) scale += neuron[n] = MathF.Exp(neuron[n] - max);
-        for (int n = inputHidden, N = inputHidden + output; n != N; n++) neuron[n] = neuron[n] / scale;
-    }
-    static int GetCnnNeuronsLen(int startDimension, int[] cnn, int[] dim)
-    {
-        int cnn_layerLen = cnn.Length - 1;
-        int cnn_neuronLen = startDimension * startDimension; // add input first
-        for (int i = 0; i < cnn_layerLen; i++)
-            cnn_neuronLen += cnn[i + 1] * dim[i + 1] * dim[i + 1];
-        return cnn_neuronLen;
-    }
-    static int GetNeuronsLen(int[] net)
-    {
-        int sum = 0;
-        for (int n = 0; n < net.Length; n++) sum += net[n];
-        return sum;
-    }
-}
 static void CnnTraining(AutoData d, ref int seed, int[] isDone, // data stuff
     bool isCnn, int[] cnn, int[] filter, int[] stride, float[] kernel, int[] dim, int[] cSteps, int[] kStep, // cnn stuff
     int[] net, float[] weight,  // nn stuff
-    int len, int epoch = -1, float lr = 0, float mom = 0) // optional hyperparameters for training only
+    int len, int epoch = -1, float lr = -1, float lr2 = 0, float mom = 0, float infinity = 0) // optional hyperparameters for training only
 {
     static int FastRand(ref int seed) { return ((seed = (214013 * seed + 2531011)) >> 16) & 0x7FFF; } // [0, 32768)
     DateTime elapsed = DateTime.Now;
     int correct = 0, all = 0;
 
     // change from training to test if no learning rate
-    bool training = lr == 0 ? false : true;
+    bool training = lr == -1 ? false : true;
 
     // cnn stuff
     int cnn_layerLen = cnn.Length - 1;
@@ -254,8 +88,6 @@ static void CnnTraining(AutoData d, ref int seed, int[] isDone, // data stuff
     // start training each epoch
     for (int x = 1, batch = 1; x < len + 1; x++)
     {
-        // drop if count reaches threshold
-        // if (training && isDone[x - 1] >= 2) continue;
         // get target label
         int target = d.GetLabel(x - 1, training);
         // create neurons arrays for nn and cnn
@@ -270,7 +102,7 @@ static void CnnTraining(AutoData d, ref int seed, int[] isDone, // data stuff
             if (!training)
                 ConvolutionForward(cnn, dim, cSteps, filter, kStep, stride, conv, kernel);
             else
-                ConvolutionForwardDropout(cnn, dim, cSteps, filter, kStep, stride, conv, kernel, ref seed);
+                ConvolutionForwardDropout(cnn, dim, cSteps, filter, kStep, stride, conv, kernel, infinity, ref seed);
 
             for (int i = 0, ii = cSteps[cnn_layerLen]; i < cOutput; i++)
                 neuron[i] = conv[ii + i];
@@ -286,11 +118,13 @@ static void CnnTraining(AutoData d, ref int seed, int[] isDone, // data stuff
 
         // general network prediction 
         correct += prediction == target ? 1 : 0; all++; // true count
+                                                        
         // test zone ends here
         if (!training) continue; // dirty
-        // probability check with count to drop high confident samples over epochs
-        if (neuron[inputHidden + prediction] >= 0.99) { isDone[x - 1]++; continue; }
-        if (neuron[inputHidden + target] >= 0.99) continue;
+                                    
+        // probability check
+        if (neuron[inputHidden + target] >= 0.99 || neuron[inputHidden + prediction] >= 0.99) 
+            continue;
 
         float[] gradient = new float[neuronLen];// nn gradients array
         float[] cnnGradient = new float[cSteps[cnn_layerLen] + cOutput];// cnn gradients array 
@@ -301,8 +135,8 @@ static void CnnTraining(AutoData d, ref int seed, int[] isDone, // data stuff
 
         // nn backprop
         Backprop(net, neuron, weight, gradient, delta, layer, inputHidden, neuronLen, weightLen);
-        // count batch size
-        batch++;
+        batch++; // count batch size
+
         // cnn backprop
         if (isCnn)
         {
@@ -311,17 +145,17 @@ static void CnnTraining(AutoData d, ref int seed, int[] isDone, // data stuff
                 cnnGradient[ii] = gradient[i];
 
             // convolution backprop with kernel update - TODO: add delta and batch support
-            ConvolutionBackprop(cnn, dim, cSteps, filter, kStep, stride, conv, kernel, kernel_delta, cnnGradient,lr);
+            ConvolutionBackprop(cnn, dim, cSteps, filter, kStep, stride, conv, kernel, cnnGradient, lr2);
         }
 
         // update
         if (prediction == target) continue;
-
         Update(net, weight, delta, layer, (neuronLen / layer * 1.0f) / (batch + 1), lr, mom);
-        batch = 0;
+        batch = 0; // reset batch size
+
     } // runs end
 
-    if (lr == 0) Console.WriteLine("Accuracy on test data = " + (correct * 100.0 / all).ToString("F2")
+    if (lr == -1) Console.WriteLine("Accuracy on test data = " + (correct * 100.0 / all).ToString("F2")
             + "% after " + ((DateTime.Now - elapsed).TotalMilliseconds / 1000.0).ToString("F2") + "s");
     else Console.WriteLine("epoch = " + epoch.ToString().PadLeft(2) + "  |  acc = " + (correct * 100.0 / all).ToString("F2").PadLeft(6)
             + "%  |  time = " + ((DateTime.Now - elapsed).TotalMilliseconds / 1000.0).ToString("F2") + "s");
@@ -370,8 +204,9 @@ void NetInfo()
     print("NN  =         " + string.Join(",", net).Replace(",", "-"));
     if (isCnn) print("Kernel weights  = " + kernel.Length.ToString());
     print("Network weights = " + weight.Length.ToString());
-    print("Learning = " + lr.ToString("F3") + " | MLT = " + lr_mlt.ToString("F2"));
-    print("Momentum = " + momentum.ToString("F2") + "  | MLT = " + mom_mlt.ToString("F2"));
+    print("Learning = " + lr.ToString("F5") + " | MLT = " + lr_mlt.ToString("F2"));
+    print("Momentum = " + momentum.ToString("F2") + "    | MLT = " + mom_mlt.ToString("F2"));
+    print("Infinity = " + infinity.ToString("F2"));
     print("\nStarting training");
 }
 
@@ -497,7 +332,8 @@ static void ConvolutionForward(int[] cnn, int[] dim, int[] cs, int[] filter, int
     }
 }
 
-static void ConvolutionForwardDropout(int[] cnn, int[] dim, int[] cs, int[] filter, int[] kstep, int[] stride, float[] conv, float[] kernel, ref int seed)
+static void ConvolutionForwardDropout(
+    int[] cnn, int[] dim, int[] cs, int[] filter, int[] kstep, int[] stride, float[] conv, float[] kernel, float infinity, ref int seed)
 {
     static int FastRand(ref int seed) { return ((seed = (214013 * seed + 2531011)) >> 16) & 0x7FFF; } // [0, 32768)
     for (int i = 0; i < cnn.Length - 1; i++)
@@ -527,8 +363,16 @@ static void ConvolutionForwardDropout(int[] cnn, int[] dim, int[] cs, int[] filt
                 for (int k = kN, K = k + rMap; k < K; k++) // conv map
                 {
                     float sum = conv[k];
-                    conv[k] = sum > 0 && FastRand(ref seed) / 32767.0f > 0.5f ? sum * left : 0; // relu activation for each neuron
+                    conv[k] = sum > 0 && FastRand(ref seed) / 32767.0f > infinity ? sum * left : 0; // relu activation for each neuron
                 }
+        /*
+        for (int r = 0; r < right; r++) // output maps //b++, 
+                for (int y = 0, k = cOut + r * dOut * dOut; y < dOut; y++)  // conv dim y col
+                    for (int xx = 0; xx < dOut; xx++, k++) // conv dim x row
+                    {
+                        float sum = conv[k];
+                        conv[k] = sum > 0 && FastRand() / 32767.0f > 0.4f ? sum * left : 0; // relu activation for each neuron
+                    }*/
         else
             for (int r = 0, kN = rStep; r < right; r++, kN += rMap) // output maps 
                 for (int k = kN, K = k + rMap; k < K; k++) // conv map
@@ -536,6 +380,15 @@ static void ConvolutionForwardDropout(int[] cnn, int[] dim, int[] cs, int[] filt
                     float sum = conv[k];
                     conv[k] = sum > 0 ? sum * left : 0; // relu activation for each neuron
                 }
+        /*
+        // relu activation
+        for (int r = 0, kN = rStep; r < right; r++, kN += rMap) // output maps 
+            for (int k = kN, K = k + rMap; k < K; k++) // conv map
+            {
+                float sum = conv[k];
+                conv[k] = sum > 0 ? sum : 0; // relu activation for each neuron
+            }
+        */
     }
 }
 
@@ -587,8 +440,8 @@ static void Backprop(int[] net, float[] neuron, float[] weight, float[] gradient
         }
     }
 }
-// 4.4 cnn bp        
-static void ConvolutionBackprop(int[] cnn, int[] dim, int[] cs, int[] filter, int[] kstep, int[] stride, float[] conv, float[] kernel, float[] kernel_delta, float[] cGradient, float lr)
+// 4.4 cnn bp
+static void ConvolutionBackprop(int[] cnn, int[] dim, int[] cs, int[] filter, int[] kstep, int[] stride, float[] conv, float[] kernel, float[] cGradient, float lr2)
 {
     // convolution gradient
     for (int i = cnn.Length - 2; i >= 1; i--)
@@ -620,7 +473,7 @@ static void ConvolutionBackprop(int[] cnn, int[] dim, int[] cs, int[] filter, in
                             int j = ls + y * sDim + x * st; // input map position 
                             for (int col = 0, fid = 0; col < kd; col++) // filter dim y cols
                                 for (int row = col * lDim, len = row + kd; row < len; row++, fid++) // filter dim x rows    
-                                    kernel_delta[w + fid] += conv[j + row] * gra * 0.005f;// * 0.5f;
+                                    kernel[w + fid] += conv[j + row] * gra * lr2;// * 0.5f;
                         }
 }
 // 4.5 update
@@ -651,15 +504,15 @@ static void ConvNetworkSave(int[] cnn, int[] filter, int[] stride, float[] kerne
     string[] netString = new string[weightLen];
     // add convolutional network first
     netString[0] = string.Join(",", cnn) + "+" + string.Join(",", filter) + "+" + string.Join(",", stride); // neural network at first line
-    // add kernel weights
+                                                                                                            // add kernel weights
     for (int i = 1; i < kernel.Length + 1; i++)
         netString[i] = ((decimal)((double)kernel[i - 1])).ToString(); // for precision
-    // add neural network 
+                                                                        // add neural network 
     netString[kernel.Length + 1] = string.Join(",", net); // neural network at first line
-    // add neural network weights
+                                                            // add neural network weights
     for (int i = kernel.Length + 2, ii = 0; i < weightLen; i++, ii++)
         netString[i] = ((decimal)((double)weight[ii])).ToString(); // for precision
-    // save file
+                                                                    // save file
     File.WriteAllLines(name, netString);
 }
 // 6.1 load network
@@ -704,10 +557,8 @@ static void ConvNetworkLoad(ref int[] cnn, ref int[] filter, ref int[] stride, r
     // resize weight array 
     weight = new float[backup.Length - (cnn_weightLen + 1)];
     // load weights
-
     for (int n = cnn_weightLen + 2, nn = 0; n < backup.Length; n++, nn++)
         weight[nn] = float.Parse(backup[n]);
-
     // close file
     Readfiles.Close(); // don't forget to close!
 }
@@ -752,7 +603,7 @@ struct AutoData // https://github.com/grensen/easy_regression#autodata
             this.labelsTraining = (new System.Net.WebClient().DownloadData(trainLabelUrl)).Skip(8).Take(60000).ToArray();
             this.samplesTest = (new System.Net.WebClient().DownloadData(testDataUrl)).Skip(16).Take(10000 * 784).ToArray();
             this.labelsTest = (new System.Net.WebClient().DownloadData(testnLabelUrl)).Skip(8).Take(10000).ToArray();
-           
+
             Console.WriteLine("Downdload complete after " + ((DateTime.Now - elapsed).TotalMilliseconds / 1000.0).ToString("F2") + "s");
 
             Console.WriteLine("Save cleaned MNIST data into folder " + yourPath + "\n");
