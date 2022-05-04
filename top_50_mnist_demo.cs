@@ -21,6 +21,8 @@ var mom_mlt  = 0.5f;
 var lr2      = 0.005f;
 var lc_mlt   = 1;
 var infinity = 0.5f;
+var seed     = 12345;
+
 // 2.0 out conv dimensions            
 int[] dim = GetCnnDimensions(cnn.Length - 1, startDimension, filter, stride);
 // 2.1 convolution steps for layer wise preparation
@@ -37,7 +39,7 @@ NetInfo();
 
 DateTime elapsed = DateTime.Now;
 int[] isDone = new int[60000]; // sample probability count
-int seed = 12345;
+
 for (int epoch = 0; epoch < 41; epoch++, lr *= lr_mlt, lr2 *= lc_mlt, momentum *= mom_mlt)
     CnnTraining(d, ref seed, isDone, isCnn, cnn, filter, stride, kernel, dim, cStep, kStep, net, weight, 60000, epoch, lr, lr2, momentum, infinity);
 
@@ -365,14 +367,6 @@ static void ConvolutionForwardDropout(
                     float sum = conv[k];
                     conv[k] = sum > 0 && FastRand(ref seed) / 32767.0f > infinity ? sum * left : 0; // relu activation for each neuron
                 }
-        /*
-        for (int r = 0; r < right; r++) // output maps //b++, 
-                for (int y = 0, k = cOut + r * dOut * dOut; y < dOut; y++)  // conv dim y col
-                    for (int xx = 0; xx < dOut; xx++, k++) // conv dim x row
-                    {
-                        float sum = conv[k];
-                        conv[k] = sum > 0 && FastRand() / 32767.0f > 0.4f ? sum * left : 0; // relu activation for each neuron
-                    }*/
         else
             for (int r = 0, kN = rStep; r < right; r++, kN += rMap) // output maps 
                 for (int k = kN, K = k + rMap; k < K; k++) // conv map
@@ -380,15 +374,6 @@ static void ConvolutionForwardDropout(
                     float sum = conv[k];
                     conv[k] = sum > 0 ? sum * left : 0; // relu activation for each neuron
                 }
-        /*
-        // relu activation
-        for (int r = 0, kN = rStep; r < right; r++, kN += rMap) // output maps 
-            for (int k = kN, K = k + rMap; k < K; k++) // conv map
-            {
-                float sum = conv[k];
-                conv[k] = sum > 0 ? sum : 0; // relu activation for each neuron
-            }
-        */
     }
 }
 
